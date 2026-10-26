@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flights">
+<title>Flight Deals</title>
+<style>
+:root{--bg:#f5f5f7;--card:#fff;--fg:#1d1d1f;--mute:#6e6e73;--acc:#0a7cff;--line:#e3e3e8}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--fg:#f5f5f7;--mute:#98989d;--line:#2c2c2e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px -apple-system,system-ui,sans-serif;padding:env(safe-area-inset-top) 0 calc(76px + env(safe-area-inset-bottom))}
+main{padding:16px;max-width:600px;margin:auto}
+h1{font-size:28px;margin:8px 0 16px}
+.card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:12px;border:1px solid var(--line)}
+.price{font-size:26px;font-weight:700}
+pre{white-space:pre-wrap;font:13px/1.45 ui-monospace,Menlo,monospace;margin:8px 0;color:var(--mute)}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+input{width:100%;padding:11px;font-size:16px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+button,.btn{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 16px;font-size:16px;font-weight:600;text-decoration:none;display:inline-block;margin:8px 8px 0 0}
+button.g{background:var(--line);color:var(--fg)}button.r{background:#d62f2f}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;color:var(--mute);border-radius:0;margin:0;padding:15px 0}
+nav button.on{color:var(--acc)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.msg{color:var(--mute);font-size:14px;margin:8px 0}
+</style></head><body><main id="app"></main>
+<nav><button data-t="deals">Deals</button><button data-t="routes">Routes</button><button data-t="settings">Settings</button></nav>
+<script>
+const $=s=>document.querySelector(s),app=$('#app');
+const ls={get:k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+const cfg={user:ls.get('user'),repo:ls.get('repo')||'Flight-Tracker',token:ls.get('token')};
+const DEFAULT={deal_ratio:0.6,routes:[{origin:'MAN',dest:'NRT,HND',label:'Manchester to Tokyo',usual_price:1000,trip_days:14}]};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api=(p,o={})=>fetch(`https://api.github.com/repos/${cfg.user}/${cfg.repo}/${p}`,{...o,headers:{Authorization:'Bearer '+cfg.token,Accept:'application/vnd.github+json'}});
+const dec=b=>new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\n/g,'')),c=>c.charCodeAt(0)));
+const enc=s=>btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+const setMsg=t=>{const m=$('#msg');if(m)m.textContent=t};
+let cfgData=null,cfgSha=null;
+
+async function readJson(n){
+  const r=await api(`contents/${n}?t=${Date.now()}`);
+  if(r.status===404)return{data:null,sha:null};
+  if(!r.ok)throw new Error(r.status===401?'Token rejected. Check Settings.':'GitHub error '+r.status);
+  const j=await r.json();return{data:JSON.parse(dec(j.content)),sha:j.sha};
+}
+
+async function dealsView(){
+  app.innerHTML='<h1>Deals</h1><div id="msg" class="msg">Loading...</div><div id="list"></div><button id="scan">Scan now</button><button class="g" id="ref">Refresh</button>';
+  $('#ref').onclick=dealsView;
+  $('#scan').onclick=async()=>{
+    const r=await api('actions/workflows/flights.yml/dispatches',{method:'POST',body:JSON.stringify({ref:'main'})});
+    setMsg(r.status===204?'Scan started. Tap Refresh in about 2 minutes.':'Could not start scan ('+r.status+'). Token needs Actions read/write.');
+  };
+  try{
+    const{data}=await readJson('deals.json');const l=(data||[]).slice().reverse();
+    setMsg(l.length?'':'No deals yet. The scan runs every Monday.');
+    $('#list').innerHTML=l.map(d=>`<div class="card"><div class="price">£${esc(d.price)}</div><b>${esc(d.label)}</b><div class="msg">Found ${new Date(d.found).toLocaleDateString('en-GB')}</div><pre>${esc(d.text)}</pre>${String(d.link).startsWith('https://')?`<a class="btn" target="_blank" rel="noopener" href="${esc(d.link)}">Open flights</a>`:''}</div>`).join('');
+  }catch(e){setMsg(e.message)}
+}
+
+function routeCards(rs){return rs.map((r,i)=>`<div class="card" data-i="${i}"><label>Name</label><input data-k="label" value="${esc(r.label)}"><div class="row"><div><label>From</label><input data-k="origin" value="${esc(r.origin)}" autocapitalize="characters"></div><div><label>To (codes, comma separated)</label><input data-k="dest" value="${esc(r.dest)}" autocapitalize="characters"></div></div><div class="row"><div><label>Usual price £ (blank = learn)</label><input data-k="usual_price" inputmode="numeric" value="${r.usual_price??''}"></div><div><label>Trip length (days)</label><input data-k="trip_days" inputmode="numeric" value="${r.trip_days}"></div></div><button class="r" data-del="${i}">Remove</button></div>`).join('')}
+function collect(){return[...document.querySelectorAll('[data-i]')].map(el=>{const g=k=>el.querySelector(`[data-k="${k}"]`).value.trim();return{label:g('label'),origin:g('origin').toUpperCase(),dest:g('dest').toUpperCase().replace(/\s/g,''),usual_price:g('usual_price')?+g('usual_price'):null,trip_days:+g('trip_days')||14}})}
+function sync(){cfgData.routes=collect();const p=+$('#ratio').value;if(p>0&&p<=1000)cfgData.deal_ratio=p/100}
+function drawRoutes(){
+  setMsg('');
+  $('#body').innerHTML=`<div class="card"><label>Alert when price is at or below this % of usual</label><input id="ratio" inputmode="numeric" value="${Math.round(cfgData.deal_ratio*100)}"></div>`+routeCards(cfgData.routes)+'<button class="g" id="add">Add route</button><button id="save">Save</button>';
+  $('#add').onclick=()=>{sync();cfgData.routes.push({label:'',origin:'MAN',dest:'',usual_price:null,trip_days:7});drawRoutes()};
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{sync();cfgData.routes.splice(+b.dataset.del,1);drawRoutes()});
+  $('#save').onclick=save;
+}
+async function routesView(){
+  app.innerHTML='<h1>Routes</h1><div id="msg" class="msg">Loading...</div><div id="body"></div>';
+  try{if(!cfgData){const{data,sha}=await readJson('config.json');cfgData=data||structuredClone(DEFAULT);cfgSha=sha}drawRoutes()}catch(e){setMsg(e.message)}
+}
+async function save(){
+  sync();
+  if(cfgData.routes.some(r=>!r.origin||!r.dest))return setMsg('Each route needs From and To codes.');
+  const r=await api('contents/config.json',{method:'PUT',body:JSON.stringify({message:'Update routes from app',content:enc(JSON.stringify(cfgData,null,2)),...(cfgSha?{sha:cfgSha}:{})})});
+  if(r.ok){cfgSha=(await r.json()).content.sha;setMsg('Saved. The next scan will use these routes.')}
+  else setMsg('Save failed ('+r.status+'). Token needs Contents read/write.');
+}
+
+function settingsView(){
+  app.innerHTML=`<h1>Settings</h1><div class="card"><label>GitHub username</label><input id="u" value="${esc(cfg.user)}" autocapitalize="off"><label>Repository</label><input id="rp" value="${esc(cfg.repo)}" autocapitalize="off"><label>Access token</label><input id="tk" type="password" value="${esc(cfg.token)}" autocapitalize="off"></div><button id="sv">Save</button><div id="msg" class="msg">${cfg.token?'':'Enter your details to connect.'}</div>`;
+  $('#sv').onclick=()=>{cfg.user=$('#u').value.trim();cfg.repo=$('#rp').value.trim();cfg.token=$('#tk').value.trim();['user','repo','token'].forEach(k=>ls.set(k,cfg[k]));cfgData=null;go('deals')};
+}
+
+function go(t){
+  if(!cfg.token||!cfg.user)t='settings';
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+  ({deals:dealsView,routes:routesView,settings:settingsView})[t]();
+}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>go(b.dataset.t));
+go('deals');
+</script></body></html>
